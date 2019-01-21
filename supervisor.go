@@ -11,6 +11,7 @@ import (
 // Process is a process managed by supervisor.
 type process interface {
 	Run(ctx context.Context) error
+	Name() string
 }
 
 // Supervisor is a process supervisor.
@@ -79,9 +80,9 @@ func (s *Supervisor) AddRunner(name string, callback Callback, policyOptions ...
 
 	r := runner{
 		Callback:      callback,
-		Name:          name,
-		RestartPolicy: s.policy.Restart,
-		Logger:        s.logger,
+		name:          name,
+		restartPolicy: s.policy.Restart,
+		logger:        s.logger,
 	}
 
 	p := Policy{
@@ -89,7 +90,7 @@ func (s *Supervisor) AddRunner(name string, callback Callback, policyOptions ...
 	}
 	p.Reconfigure(policyOptions...)
 
-	r.RestartPolicy = p.Restart
+	r.restartPolicy = p.Restart
 
 	s.processes[key] = &r
 }
@@ -109,8 +110,8 @@ func (s *Supervisor) AddTask(name string, startStopper StartStopper, policyOptio
 
 	t := task{
 		StartStopper: startStopper,
-		Name:         name,
-		Logger:       s.logger,
+		name:         name,
+		logger:       s.logger,
 	}
 
 	p := Policy{
@@ -118,7 +119,7 @@ func (s *Supervisor) AddTask(name string, startStopper StartStopper, policyOptio
 	}
 	p.Reconfigure(policyOptions...)
 
-	t.RestartPolicy = p.Restart
+	t.restartPolicy = p.Restart
 
 	s.processes[key] = &t
 }
@@ -145,10 +146,16 @@ func (s *Supervisor) StartWithContext(ctx context.Context) {
 	for name := range s.processes {
 		wg.Add(1)
 
-		task := s.processes[name]
+		process := s.processes[name]
 		go func() {
-			defer wg.Done()
-			if err := task.Run(ctx); err != nil {
+			defer func() {
+				if err := recover(); err != nil {
+					s.logger(Warn, loggerData{"cause": err, "name": process.Name()}, "runner terminated due a panic")
+				}
+
+				wg.Done()
+			}()
+			if err := process.Run(ctx); err != nil {
 				errChan <- err
 			}
 		}()

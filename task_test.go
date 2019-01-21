@@ -23,11 +23,11 @@ func TestTask_Start_WithError_NeverPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(errors.New("some_error")).Times(1)
 	startStopper.On("Stop").Return(nil).Times(1)
@@ -48,11 +48,11 @@ func TestTask_Start_WithError_OnFailurePolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(errors.New("some_error")).Times(2)
 	startStopper.On("Stop").Return(nil).Times(2)
@@ -73,11 +73,11 @@ func TestTask_Start_WithError_AlwaysPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(errors.New("some_error")).Times(2)
 	startStopper.On("Stop").Return(nil).Times(2)
@@ -98,11 +98,11 @@ func TestTask_Start_StartAndExitWithoutWait_NeverPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(nil).Times(1)
 	startStopper.On("Stop").Return(nil).Times(1)
@@ -123,11 +123,11 @@ func TestTask_Start_StartAndExitWithoutWait_OnFailurePolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(nil).Times(1)
 	startStopper.On("Stop").Return(nil).Times(1)
@@ -148,11 +148,11 @@ func TestTask_Start_StartAndExitWithoutWait_AlwaysPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.Anything).Return(nil).Times(2)
 	startStopper.On("Stop").Return(nil).Times(2)
@@ -173,11 +173,11 @@ func TestTask_Start_StartAndWait_NeverPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.AnythingOfType("*context.cancelCtx")).Return(nil).Times(1).Run(func(args mock.Arguments) {
 		ctx := args.Get(0).(context.Context)
@@ -205,11 +205,11 @@ func TestTask_Start_StartAndWait_OnFailurePolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.AnythingOfType("*context.cancelCtx")).Return(nil).Times(1).Run(func(args mock.Arguments) {
 		ctx := args.Get(0).(context.Context)
@@ -237,11 +237,11 @@ func TestTask_Start_StartAndWait_AlwaysPolicy(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 	startStopper.On("Start", mock.AnythingOfType("*context.cancelCtx")).Return(nil).Run(func(args mock.Arguments) {
 		ctx := args.Get(0).(context.Context)
@@ -270,11 +270,11 @@ func TestTask_Stop_WithError_Logs(t *testing.T) {
 	startStopper := &MockStartStopper{}
 	r := task{
 		StartStopper: startStopper,
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: func(_ string, _ map[string]interface{}, msg string, _ ...interface{}) {
+		logger: func(_ string, _ map[string]interface{}, msg string, _ ...interface{}) {
 			if msg == "failed to stop task" {
 				calls++
 			}
@@ -290,4 +290,19 @@ func TestTask_Stop_WithError_Logs(t *testing.T) {
 	Expect(err).ToNot(HaveOccurred())
 	Expect(calls).To(Equal(1))
 	Expect(startStopper.AssertExpectations(t)).To(BeTrue())
+}
+
+func TestTask_Name(t *testing.T) {
+	RegisterTestingT(t)
+
+	// Assign
+	r := task{
+		name: "some_name",
+	}
+
+	// Act
+	name := r.Name()
+
+	// Assert
+	Expect(name).To(Equal(r.name))
 }

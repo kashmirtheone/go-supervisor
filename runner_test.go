@@ -25,11 +25,11 @@ func TestRunner_Run_WithError_NeverPolicy(t *testing.T) {
 			calls++
 			return errors.New("some error")
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -51,11 +51,11 @@ func TestRunner_Run_WithError_OnFailurePolicy(t *testing.T) {
 			calls++
 			return errors.New("some error")
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -77,11 +77,11 @@ func TestRunner_Run_WithError_AlwaysPolicy(t *testing.T) {
 			calls++
 			return errors.New("some error")
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -103,11 +103,11 @@ func TestRunner_Run_RunAndExitWithoutWait_NeverPolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -129,11 +129,11 @@ func TestRunner_Run_RunAndExitWithoutWait_OnFailurePolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -155,11 +155,11 @@ func TestRunner_Run_RunAndExitWithoutWait_AlwaysPolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -182,11 +182,11 @@ func TestRunner_Run_RunAndWait_NeverPolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      never,
 			MaxAttempts: 100,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -214,11 +214,11 @@ func TestRunner_Run_RunAndWait_OnFailurePolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      onFailure,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -246,11 +246,11 @@ func TestRunner_Run_RunAndWait_AlwaysPolicy(t *testing.T) {
 			calls++
 			return nil
 		},
-		RestartPolicy: RestartPolicy{
+		restartPolicy: RestartPolicy{
 			Policy:      always,
 			MaxAttempts: 2,
 		},
-		Logger: dumbLogger,
+		logger: dumbLogger,
 	}
 
 	// Act
@@ -264,4 +264,19 @@ func TestRunner_Run_RunAndWait_AlwaysPolicy(t *testing.T) {
 	// Assert
 	Expect(err).ToNot(HaveOccurred())
 	Expect(calls).To(Equal(1))
+}
+
+func TestRunner_Name(t *testing.T) {
+	RegisterTestingT(t)
+
+	// Assign
+	r := runner{
+		name: "some_name",
+	}
+
+	// Act
+	name := r.Name()
+
+	// Assert
+	Expect(name).To(Equal(r.name))
 }

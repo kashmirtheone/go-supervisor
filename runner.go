@@ -17,16 +17,21 @@ type Callback func(ctx context.Context) error
 // Runner contains the callback and manages the restart policies and its context.
 type runner struct {
 	Callback      Callback
-	Name          string
-	RestartPolicy RestartPolicy
+	name          string
+	restartPolicy RestartPolicy
 	terminated    int32
-	Logger        Logger
+	logger        Logger
+}
+
+// Name returns runner name.
+func (r *runner) Name() string {
+	return r.name
 }
 
 // Run runs the Runner.
 // It creates a cancel context and manages callback error according restarting policy.
 func (r *runner) Run(ctx context.Context) error {
-	r.Logger(Info, loggerData{"name": r.Name}, "runner is starting")
+	r.logger(Info, loggerData{"name": r.Name}, "runner is starting")
 
 	var err error
 	rCtx, cancel := context.WithCancel(context.Background())
@@ -47,31 +52,31 @@ loop:
 	for ; ; <-ticker.C {
 		err = r.Callback(rCtx)
 		if err != nil {
-			r.Logger(Error, loggerData{"name": r.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run runner")
+			r.logger(Error, loggerData{"name": r.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run runner")
 		}
 
-		if atomic.LoadInt32(&r.terminated) == 1 || attempts >= r.RestartPolicy.MaxAttempts {
+		if atomic.LoadInt32(&r.terminated) == 1 || attempts >= r.restartPolicy.MaxAttempts {
 			break loop
 		}
 
-		switch r.RestartPolicy.Policy {
+		switch r.restartPolicy.Policy {
 		case never:
 			break loop
 		case onFailure:
 			if err == nil {
 				break loop
 			}
-			r.Logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
+			r.logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
 			break
 		case always:
-			r.Logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
+			r.logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
 			break
 		}
 
 		attempts++
 	}
 
-	r.Logger(Info, loggerData{"name": r.Name}, "runner terminated")
+	r.logger(Info, loggerData{"name": r.Name}, "runner terminated")
 
 	return err
 }

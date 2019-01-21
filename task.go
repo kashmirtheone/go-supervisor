@@ -16,16 +16,21 @@ type StartStopper interface {
 // Task contains the start stopper and manages the restart policies and its context.
 type task struct {
 	StartStopper
-	Name          string
-	RestartPolicy RestartPolicy
+	name          string
+	restartPolicy RestartPolicy
 	terminated    int32
-	Logger        Logger
+	logger        Logger
+}
+
+// Name returns task name.
+func (t *task) Name() string {
+	return t.name
 }
 
 // Run starts and stops the task.
 // It creates a cancel context and manages task error according restarting policy.
 func (t *task) Run(ctx context.Context) error {
-	t.Logger(Info, loggerData{"name": t.Name}, "task is starting")
+	t.logger(Info, loggerData{"name": t.Name}, "task is starting")
 
 	var err error
 	rCtx, cancel := context.WithCancel(context.Background())
@@ -46,36 +51,36 @@ loop:
 	for ; ; <-ticker.C {
 		err = t.Start(rCtx)
 		if err != nil {
-			t.Logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run task")
+			t.logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run task")
 		}
 
-		t.Logger(Debug, nil, "task is stopping")
+		t.logger(Debug, nil, "task is stopping")
 		if stoperr := t.Stop(); stoperr != nil {
-			t.Logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", stoperr)}, "failed to stop task")
+			t.logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", stoperr)}, "failed to stop task")
 		}
 
-		if atomic.LoadInt32(&t.terminated) == 1 || attempts >= t.RestartPolicy.MaxAttempts {
+		if atomic.LoadInt32(&t.terminated) == 1 || attempts >= t.restartPolicy.MaxAttempts {
 			break loop
 		}
 
-		switch t.RestartPolicy.Policy {
+		switch t.restartPolicy.Policy {
 		case never:
 			break loop
 		case onFailure:
 			if err == nil {
 				break loop
 			}
-			t.Logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
+			t.logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
 			break
 		case always:
-			t.Logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
+			t.logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
 			break
 		}
 
 		attempts++
 	}
 
-	t.Logger(Info, loggerData{"name": t.Name}, "task terminated")
+	t.logger(Info, loggerData{"name": t.Name}, "task terminated")
 
 	return err
 }

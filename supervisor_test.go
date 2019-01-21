@@ -163,8 +163,8 @@ func TestSupervisor_AddRunner_AlreadyExistent(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.RestartPolicy.Policy).To(Equal(always))
-	Expect(addedRunner.RestartPolicy.MaxAttempts).To(Equal(2))
+	Expect(addedRunner.restartPolicy.Policy).To(Equal(always))
+	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(2))
 }
 
 func TestSupervisor_AddRunner_WithDefaultPolicies(t *testing.T) {
@@ -182,8 +182,8 @@ func TestSupervisor_AddRunner_WithDefaultPolicies(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.RestartPolicy.Policy).To(Equal(always))
-	Expect(addedRunner.RestartPolicy.MaxAttempts).To(Equal(2))
+	Expect(addedRunner.restartPolicy.Policy).To(Equal(always))
+	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(2))
 }
 
 func TestSupervisor_AddRunner_WithRestartPolicyOnFailure(t *testing.T) {
@@ -201,8 +201,8 @@ func TestSupervisor_AddRunner_WithRestartPolicyOnFailure(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.RestartPolicy.Policy).To(Equal(onFailure))
-	Expect(addedRunner.RestartPolicy.MaxAttempts).To(Equal(3))
+	Expect(addedRunner.restartPolicy.Policy).To(Equal(onFailure))
+	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(3))
 }
 
 func TestSupervisor_AddTask_AlreadyExistent(t *testing.T) {
@@ -221,8 +221,8 @@ func TestSupervisor_AddTask_AlreadyExistent(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.RestartPolicy.Policy).To(Equal(always))
-	Expect(addedTask.RestartPolicy.MaxAttempts).To(Equal(2))
+	Expect(addedTask.restartPolicy.Policy).To(Equal(always))
+	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(2))
 }
 
 func TestSupervisor_AddTask_WithDefaultPolicies(t *testing.T) {
@@ -240,8 +240,8 @@ func TestSupervisor_AddTask_WithDefaultPolicies(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.RestartPolicy.Policy).To(Equal(always))
-	Expect(addedTask.RestartPolicy.MaxAttempts).To(Equal(2))
+	Expect(addedTask.restartPolicy.Policy).To(Equal(always))
+	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(2))
 }
 
 func TestSupervisor_AddTask_WithRestartPolicyOnFailure(t *testing.T) {
@@ -259,8 +259,8 @@ func TestSupervisor_AddTask_WithRestartPolicyOnFailure(t *testing.T) {
 
 	Expect(len(s.processes)).To(Equal(1))
 	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.RestartPolicy.Policy).To(Equal(onFailure))
-	Expect(addedTask.RestartPolicy.MaxAttempts).To(Equal(3))
+	Expect(addedTask.restartPolicy.Policy).To(Equal(onFailure))
+	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(3))
 }
 
 func TestSupervisor_Start_WithoutErrors(t *testing.T) {
@@ -271,6 +271,25 @@ func TestSupervisor_Start_WithoutErrors(t *testing.T) {
 	p := &mockProcess{}
 	s.processes["some_process"] = p
 	p.On("Run", mock.Anything).Return(nil)
+
+	// Act
+	s.Start()
+
+	// Assert
+	Expect(p.AssertExpectations(t)).To(BeTrue())
+}
+
+func TestSupervisor_Start_WithPanic_FailurePolicyIgnore(t *testing.T) {
+	RegisterTestingT(t)
+
+	// Assign
+	s := NewSupervisor(WithFailurePolicyIgnore())
+	p := &mockProcess{}
+	s.processes["some_process"] = p
+	p.On("Run", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		panic("panic here")
+	})
+	p.On("Name").Return("some_process")
 
 	// Act
 	s.Start()
