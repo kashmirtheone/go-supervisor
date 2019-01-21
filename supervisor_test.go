@@ -128,7 +128,7 @@ func TestSupervisor_NewSupervisor_SetShutdownSignal(t *testing.T) {
 	s := Supervisor{}
 
 	// Act
-	s.SetShutdownSignal(signal.OSShutdownSignal)
+	s.SetShutdownSignal(signal.OSShutdownSignal())
 
 	// Assert
 	Expect(s.shutdown).ToNot(BeNil())

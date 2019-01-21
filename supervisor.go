@@ -19,7 +19,7 @@ type process interface {
 type Supervisor struct {
 	mux       sync.Mutex
 	processes map[string]process
-	shutdown  func() <-chan struct{}
+	shutdown  chan struct{}
 	policy    Policy
 	logger    Logger
 }
@@ -40,7 +40,7 @@ func NewSupervisor(policyOptions ...PolicyOption) Supervisor {
 		},
 		logger: defaultLogger,
 	}
-	s.shutdown = signal.OSShutdownSignal
+	s.shutdown = signal.OSShutdownSignal()
 	s.policy.Reconfigure(policyOptions...)
 
 	return s
@@ -59,7 +59,7 @@ func (s *Supervisor) DisableLogger() {
 }
 
 // SetShutdownSignal allows you to set the shutdown signal.
-func (s *Supervisor) SetShutdownSignal(signal func() <-chan struct{}) {
+func (s *Supervisor) SetShutdownSignal(signal chan struct{}) {
 	if signal != nil {
 		s.shutdown = signal
 	}
@@ -131,12 +131,10 @@ func (s *Supervisor) Start() {
 
 // StartWithContext starts the supervisor with a specific context.
 func (s *Supervisor) StartWithContext(ctx context.Context) {
-	s.logger(Info, nil, "starting supervisor")
-
 	ctx, cancel := context.WithCancel(ctx)
 
 	go func() {
-		<-s.shutdown()
+		<-s.shutdown
 		s.logger(Info, nil, "supervisor ordered to shutdown")
 		cancel()
 	}()
@@ -173,6 +171,9 @@ func (s *Supervisor) StartWithContext(ctx context.Context) {
 	}()
 
 	wg.Wait()
+}
 
-	s.logger(Info, nil, "supervisor finished gracefully")
+// Shutdown stops supervisor..
+func (s *Supervisor) Shutdown() {
+	s.shutdown <- struct{}{}
 }

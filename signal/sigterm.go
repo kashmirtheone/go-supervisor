@@ -7,7 +7,7 @@ import (
 )
 
 // OSShutdownSignal happens when OS sends a signal term signal.
-func OSShutdownSignal() <-chan struct{} {
+func OSShutdownSignal() chan struct{} {
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, syscall.SIGINT, syscall.SIGTERM)
 
