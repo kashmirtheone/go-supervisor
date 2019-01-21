@@ -30,7 +30,7 @@ func (t *task) Name() string {
 // Run starts and stops the task.
 // It creates a cancel context and manages task error according restarting policy.
 func (t *task) Run(ctx context.Context) error {
-	t.logger(Info, loggerData{"name": t.Name}, "task is starting")
+	t.logger(Info, loggerData{"name": t.Name()}, "task is starting")
 
 	var err error
 	rCtx, cancel := context.WithCancel(context.Background())
@@ -51,12 +51,12 @@ loop:
 	for ; ; <-ticker.C {
 		err = t.Start(rCtx)
 		if err != nil {
-			t.logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run task")
+			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%+v", err)}, "failed to run task")
 		}
 
 		t.logger(Debug, nil, "task is stopping")
 		if stoperr := t.Stop(); stoperr != nil {
-			t.logger(Error, loggerData{"name": t.Name, "cause": fmt.Sprintf("%+v", stoperr)}, "failed to stop task")
+			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%+v", stoperr)}, "failed to stop task")
 		}
 
 		if atomic.LoadInt32(&t.terminated) == 1 || attempts >= t.restartPolicy.MaxAttempts {
@@ -70,17 +70,17 @@ loop:
 			if err == nil {
 				break loop
 			}
-			t.logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
+			t.logger(Info, loggerData{"name": t.Name(), "attempts": attempts}, "task is restarting")
 			break
 		case always:
-			t.logger(Info, loggerData{"name": t.Name, "attempts": attempts}, "task is restarting")
+			t.logger(Info, loggerData{"name": t.Name(), "attempts": attempts}, "task is restarting")
 			break
 		}
 
 		attempts++
 	}
 
-	t.logger(Info, loggerData{"name": t.Name}, "task terminated")
+	t.logger(Info, loggerData{"name": t.Name()}, "task terminated")
 
 	return err
 }

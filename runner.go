@@ -31,7 +31,7 @@ func (r *runner) Name() string {
 // Run runs the Runner.
 // It creates a cancel context and manages callback error according restarting policy.
 func (r *runner) Run(ctx context.Context) error {
-	r.logger(Info, loggerData{"name": r.Name}, "runner is starting")
+	r.logger(Info, loggerData{"name": r.Name()}, "runner is starting")
 
 	var err error
 	rCtx, cancel := context.WithCancel(context.Background())
@@ -52,7 +52,7 @@ loop:
 	for ; ; <-ticker.C {
 		err = r.Callback(rCtx)
 		if err != nil {
-			r.logger(Error, loggerData{"name": r.Name, "cause": fmt.Sprintf("%+v", err)}, "failed to run runner")
+			r.logger(Error, loggerData{"name": r.Name(), "cause": fmt.Sprintf("%+v", err)}, "failed to run runner")
 		}
 
 		if atomic.LoadInt32(&r.terminated) == 1 || attempts >= r.restartPolicy.MaxAttempts {
@@ -66,17 +66,17 @@ loop:
 			if err == nil {
 				break loop
 			}
-			r.logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
+			r.logger(Info, loggerData{"name": r.Name(), "attempts": attempts}, "runner is restarting")
 			break
 		case always:
-			r.logger(Info, loggerData{"name": r.Name, "attempts": attempts}, "runner is restarting")
+			r.logger(Info, loggerData{"name": r.Name(), "attempts": attempts}, "runner is restarting")
 			break
 		}
 
 		attempts++
 	}
 
-	r.logger(Info, loggerData{"name": r.Name}, "runner terminated")
+	r.logger(Info, loggerData{"name": r.Name()}, "runner terminated")
 
 	return err
 }
