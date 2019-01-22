@@ -25,8 +25,8 @@ type Supervisor struct {
 }
 
 // NewSupervisor creates a new supervisor with default policies.
-func NewSupervisor(policyOptions ...PolicyOption) Supervisor {
-	s := Supervisor{
+func NewSupervisor(policyOptions ...PolicyOption) *Supervisor {
+	s := &Supervisor{
 		mux:       sync.Mutex{},
 		processes: make(map[string]process),
 		policy: Policy{
@@ -78,7 +78,7 @@ func (s *Supervisor) AddRunner(name string, callback Callback, policyOptions ...
 		return
 	}
 
-	r := runner{
+	r := &runner{
 		Callback:      callback,
 		name:          name,
 		restartPolicy: s.policy.Restart,
@@ -92,7 +92,7 @@ func (s *Supervisor) AddRunner(name string, callback Callback, policyOptions ...
 
 	r.restartPolicy = p.Restart
 
-	s.processes[key] = &r
+	s.processes[key] = r
 }
 
 // AddTask adds the task to pool.
@@ -108,7 +108,7 @@ func (s *Supervisor) AddTask(name string, startStopper StartStopper, policyOptio
 		return
 	}
 
-	t := task{
+	t := &task{
 		StartStopper: startStopper,
 		name:         name,
 		logger:       s.logger,
@@ -121,7 +121,7 @@ func (s *Supervisor) AddTask(name string, startStopper StartStopper, policyOptio
 
 	t.restartPolicy = p.Restart
 
-	s.processes[key] = &t
+	s.processes[key] = t
 }
 
 // Start starts the supervisor.

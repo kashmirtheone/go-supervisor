@@ -52,7 +52,7 @@ loop:
 	for ; ; <-ticker.C {
 		err = r.Callback(rCtx)
 		if err != nil {
-			r.logger(Error, loggerData{"name": r.Name(), "cause": fmt.Sprintf("%+v", err)}, "failed to run runner")
+			r.logger(Error, loggerData{"name": r.Name(), "cause": fmt.Sprintf("%v", err)}, "failed to run runner")
 		}
 
 		if atomic.LoadInt32(&r.terminated) == 1 || attempts >= r.restartPolicy.MaxAttempts {

@@ -51,12 +51,12 @@ loop:
 	for ; ; <-ticker.C {
 		err = t.Start(rCtx)
 		if err != nil {
-			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%+v", err)}, "failed to run task")
+			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%v", err)}, "failed to run task")
 		}
 
 		t.logger(Debug, nil, "task is stopping")
 		if stoperr := t.Stop(); stoperr != nil {
-			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%+v", stoperr)}, "failed to stop task")
+			t.logger(Error, loggerData{"name": t.Name(), "cause": fmt.Sprintf("%v", stoperr)}, "failed to stop task")
 		}
 
 		if atomic.LoadInt32(&t.terminated) == 1 || attempts >= t.restartPolicy.MaxAttempts {
