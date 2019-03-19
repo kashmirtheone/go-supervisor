@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"gitlab.com/marcoxavier/supervisor/signal"
+	"github.com/kashmirtheone/go-supervisor/signal"
 )
 
 // Process is a process managed by supervisor.

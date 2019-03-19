@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 
-	"gitlab.com/marcoxavier/supervisor"
+	supervisor "github.com/kashmirtheone/go-supervisor"
 )
 
 type Task struct {

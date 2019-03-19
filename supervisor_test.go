@@ -6,7 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	"gitlab.com/marcoxavier/supervisor/signal"
+	"github.com/kashmirtheone/go-supervisor/signal"
 
 	. "github.com/onsi/gomega"
 	mock "github.com/stretchr/testify/mock"
