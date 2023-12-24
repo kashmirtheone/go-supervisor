@@ -154,9 +154,13 @@ func (s *Supervisor) Start() {
 	atomic.SwapInt32(&s.state, stateStarting)
 
 	for _, process := range s.processes {
-		l.Info("starting")
+		l.Info("starting",
+			slog.String("process", process.Name()),
+		)
 		go process.Start()
-		l.Debug("started")
+		l.Debug("started",
+			slog.String("process", process.Name()),
+		)
 	}
 
 	l.Info("all processes started")
