@@ -3,177 +3,216 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 
-	"github.com/kashmirtheone/go-supervisor/signal"
+	"github.com/kashmirtheone/go-supervisor/v2/signal"
 )
 
-// Process is a process managed by supervisor.
-type process interface {
-	Run(ctx context.Context) error
+type Process interface {
 	Name() string
+	Start()
+	Stop()
 }
 
-// Supervisor is a process supervisor.
-// It manages all process according failure policy.
+const (
+	processStateReady int32 = iota
+	processStateStarted
+	processStateStopping
+	processStateStopped
+	processStateAborted
+)
+
+const (
+	stateReady int32 = iota
+	stateStarting
+	stateStarted
+	stateStopping
+	stateStopped
+)
+
+// Callback is a function that will be triggered when supervisor starts.
+// It injects a context that will be canceled when supervisor shutdown.
+// You should listen <-ctx.Done() to lock/unlock your callback.
+type Callback func(ctx context.Context) error
+
+// StartStopper is a task that contains a start and stop method.
+// Start should block while running the processes.
+// Stop should signal the Start method to return. It is not required for stop to only return after start has returned.
+type StartStopper interface {
+	Start() error
+	Stop() error
+}
+
+// Supervisor is a process manager.
+// It manages all processes according restart policy.
 type Supervisor struct {
-	mux       sync.Mutex
-	processes map[string]process
-	shutdown  chan struct{}
-	policy    Policy
-	logger    Logger
+	options        Options
+	mux            sync.Mutex
+	shutdownSignal chan struct{}
+	processes      map[string]Process
+	state          int32
 }
 
-// NewSupervisor creates a new supervisor with default policies.
-func NewSupervisor(policyOptions ...PolicyOption) *Supervisor {
+// New creates a new supervisor with optional configuration.
+func New(options ...Option) *Supervisor {
 	s := &Supervisor{
-		mux:       sync.Mutex{},
-		processes: make(map[string]process),
-		policy: Policy{
-			Failure: FailurePolicy{
-				Policy: shutdown,
-			},
-			Restart: RestartPolicy{
-				Policy:      never,
-				MaxAttempts: 1,
+		options: Options{
+			Policy: PolicyOptions{
+				FailurePolicy:   Shutdown,
+				ShutdownControl: make(chan struct{}),
 			},
 		},
-		logger: defaultLogger,
+		mux:            sync.Mutex{},
+		shutdownSignal: signal.SigtermSignal(),
+		processes:      map[string]Process{},
+		state:          stateReady,
 	}
-	s.shutdown = signal.OSShutdownSignal()
-	s.policy.Reconfigure(policyOptions...)
 
+	s.Reconfigure(options...)
 	return s
 }
 
-// SetLogger allows you to set the logger.
-func (s *Supervisor) SetLogger(logger Logger) {
-	if logger != nil {
-		s.logger = logger
-	}
+// Reconfigure reconfigures supervisor.
+func (s *Supervisor) Reconfigure(options ...Option) {
+	s.options.Reconfigure(options...)
 }
 
-// DisableLogger allows you to disable the logger.
-func (s *Supervisor) DisableLogger() {
-	s.logger = dumbLogger
-}
-
-// SetShutdownSignal allows you to set the shutdown signal.
-func (s *Supervisor) SetShutdownSignal(signal chan struct{}) {
-	if signal != nil {
-		s.shutdown = signal
-	}
-}
-
-// AddRunner adds the callback to a runner.
-// Runner will trigger callback once supervisor starts.
-// Name is the identifier of runner, it need to be unique across all runners in this pool or will be ignored.
-func (s *Supervisor) AddRunner(name string, callback Callback, policyOptions ...PolicyOption) {
-	key := fmt.Sprintf("%s-%s", "runner", name)
-	s.mux.Lock()
-	defer s.mux.Unlock()
-
-	if _, exists := s.processes[key]; exists {
-		s.logger(Error, loggerData{"name": name}, "runner already exists")
-		return
-	}
-
-	r := &runner{
-		Callback:      callback,
-		name:          name,
-		restartPolicy: s.policy.Restart,
-		logger:        s.logger,
-	}
-
-	p := Policy{
-		Restart: s.policy.Restart,
-	}
-	p.Reconfigure(policyOptions...)
-
-	r.restartPolicy = p.Restart
-
-	s.processes[key] = r
-}
-
-// AddTask adds the task to pool.
+// AddTask adds the task to supervisor.
 // Task will be started once supervisor starts.
-// Name is the identifier of task, it need to be unique across all tasks in this pool or will be ignored.
-func (s *Supervisor) AddTask(name string, startStopper StartStopper, policyOptions ...PolicyOption) {
+// Name is the identifier of task, it needs to be unique across all tasks or will be ignored.
+func (s *Supervisor) AddTask(name string, startStopper StartStopper, options ...Option) {
+	l := slog.With(
+		slog.String("name", name),
+		slog.Any("labels", []string{"supervisor", "add-task"}),
+	)
 	key := fmt.Sprintf("%s-%s", "task", name)
+
+	if atomic.LoadInt32(&s.state) != stateReady {
+		l.Warn("can not add task, supervisor not in ready state")
+		return
+	}
+
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
 	if _, exists := s.processes[key]; exists {
-		s.logger(Error, loggerData{"name": name}, "task already exists")
+		l.Warn("task already exists")
 		return
 	}
 
-	t := &task{
-		StartStopper: startStopper,
-		name:         name,
-		logger:       s.logger,
-	}
-
-	p := Policy{
-		Restart: s.policy.Restart,
-	}
-	p.Reconfigure(policyOptions...)
-
-	t.restartPolicy = p.Restart
+	t := NewTask(name, startStopper.Start, startStopper.Stop, s.options)
+	t.options.Reconfigure(options...)
 
 	s.processes[key] = t
 }
 
-// Start starts the supervisor.
-func (s *Supervisor) Start() {
-	s.StartWithContext(context.Background())
-}
+// AddRunner adds the callback to supervisor.
+// Runner will trigger callback once supervisor starts.
+// Name is the identifier of runner, it needs to be unique across all runners or will be ignored.
+func (s *Supervisor) AddRunner(name string, callback Callback, options ...Option) {
+	l := slog.With(
+		slog.String("name", name),
+		slog.Any("labels", []string{"supervisor", "add-runner"}),
+	)
+	key := fmt.Sprintf("%s-%s", "runner", name)
 
-// StartWithContext starts the supervisor with a specific context.
-func (s *Supervisor) StartWithContext(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	go func() {
-		<-s.shutdown
-		s.logger(Info, nil, "supervisor ordered to shutdown")
-		cancel()
-	}()
-
-	errChan := make(chan error)
-	wg := sync.WaitGroup{}
-	for name := range s.processes {
-		wg.Add(1)
-
-		process := s.processes[name]
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					s.logger(Warn, loggerData{"cause": err, "name": process.Name()}, "runner terminated due a panic")
-				}
-
-				wg.Done()
-			}()
-			if err := process.Run(ctx); err != nil {
-				errChan <- err
-			}
-		}()
+	if atomic.LoadInt32(&s.state) != stateReady {
+		l.Warn("can not add runner, supervisor not in ready state")
+		return
 	}
 
+	s.mux.Lock()
+	defer s.mux.Unlock()
+
+	if _, exists := s.processes[key]; exists {
+		l.Warn("runner already exists")
+		return
+	}
+
+	r := NewRunner(name, callback, s.options)
+	r.options.Reconfigure(options...)
+	s.processes[key] = r
+}
+
+// Start starts the supervisor.
+func (s *Supervisor) Start() {
+	l := slog.With(
+		slog.Any("labels", []string{"supervisor", "start"}),
+	)
+
+	if len(s.processes) <= 0 {
+		l.Warn("no processes are registered")
+		return
+	}
+
+	go s.runControlHandler(l)
+
+	// start all
+	l.Info("starting all processes")
+	atomic.SwapInt32(&s.state, stateStarting)
+
+	for _, process := range s.processes {
+		l.Info("starting")
+		go process.Start()
+		l.Debug("started")
+	}
+
+	l.Info("all processes started")
+	atomic.SwapInt32(&s.state, stateStarted)
+
+	// wait shutdown
+	select {
+	case <-s.shutdownSignal:
+		l.Info("received shutdown signal")
+	}
+
+	// stop all processes
+	l.Info("stopping the all processes")
+	atomic.SwapInt32(&s.state, stateStopping)
+
+	wg := sync.WaitGroup{}
+	for _, process := range s.processes {
+		wg.Add(1)
+		go func(process Process) {
+			l.Info("waiting for process to terminate",
+				slog.String("process", process.Name()),
+			)
+			process.Stop()
+			l.Info("process stopped",
+				slog.String("process", process.Name()),
+			)
+			wg.Done()
+		}(process)
+	}
+	wg.Wait()
+
+	l.Info("supervisor terminated")
+	atomic.SwapInt32(&s.state, stateStopped)
+}
+
+// Shutdown stops supervisor.
+func (s *Supervisor) Shutdown() {
+	l := slog.With(
+		slog.Any("labels", []string{"supervisor", "shutdown"}),
+	)
+
+	if atomic.LoadInt32(&s.state) != stateStarted {
+		l.Warn("supervisor not running")
+		return
+	}
+
+	s.shutdownSignal <- struct{}{}
+}
+
+func (s *Supervisor) runControlHandler(l *slog.Logger) {
 	go func() {
-		for range errChan {
-			switch s.policy.Failure.Policy {
-			case shutdown:
-				s.logger(Warn, nil, "under configured failure policy, supervisor will shutdown")
-				cancel()
-			case ignore:
+		for range s.options.Policy.ShutdownControl {
+			if atomic.LoadInt32(&s.state) == stateStarted {
+				l.Warn("under configured failure policy, supervisor will shutdown")
+				s.shutdownSignal <- struct{}{}
 			}
 		}
 	}()
-
-	wg.Wait()
-}
-
-// Shutdown stops supervisor..
-func (s *Supervisor) Shutdown() {
-	s.shutdown <- struct{}{}
 }

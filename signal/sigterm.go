@@ -6,8 +6,8 @@ import (
 	"syscall"
 )
 
-// OSShutdownSignal happens when OS sends a signal term signal.
-func OSShutdownSignal() chan struct{} {
+// SigtermSignal happens when OS sends a signal term or sigint signal.
+func SigtermSignal() chan struct{} {
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, syscall.SIGINT, syscall.SIGTERM)
 

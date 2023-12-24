@@ -2,337 +2,452 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/pkg/errors"
-
-	"github.com/kashmirtheone/go-supervisor/signal"
-
-	. "github.com/onsi/gomega"
-	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func TestSupervisor_NewSupervisor_WithDefaultPolicies(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor()
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(shutdown))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(1))
-	Expect(s.policy.Restart.Policy).To(Equal(never))
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
 }
 
-func TestSupervisor_NewSupervisor_WithRestartPolicyAlways(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(shutdown))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(2))
-	Expect(s.policy.Restart.Policy).To(Equal(always))
-}
-
-func TestSupervisor_NewSupervisor_WithRestartPolicyOnFailure(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor(WithRestartPolicyOnFailure(2))
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(shutdown))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(2))
-	Expect(s.policy.Restart.Policy).To(Equal(onFailure))
-}
-
-func TestSupervisor_NewSupervisor_WithRestartPolicyNever(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor(WithRestartPolicyNever())
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(shutdown))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(1))
-	Expect(s.policy.Restart.Policy).To(Equal(never))
-}
-
-func TestSupervisor_NewSupervisor_WithFailurePolicyIgnore(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor(WithRestartPolicyNever(), WithFailurePolicyIgnore())
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(ignore))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(1))
-	Expect(s.policy.Restart.Policy).To(Equal(never))
-}
-
-func TestSupervisor_NewSupervisor_WithFailurePolicyShutdown(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-
-	// Act
-	s := NewSupervisor(WithRestartPolicyNever(), WithFailurePolicyShutdown())
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-	Expect(s.logger).ToNot(BeNil())
-	Expect(s.policy.Failure.Policy).To(Equal(shutdown))
-	Expect(s.policy.Restart.MaxAttempts).To(Equal(1))
-	Expect(s.policy.Restart.Policy).To(Equal(never))
-}
-
-func TestSupervisor_NewSupervisor_SetLogger(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := Supervisor{}
-
-	// Act
-	s.SetLogger(dumbLogger)
-
-	// Assert
-	Expect(s.logger).ToNot(BeNil())
-}
-
-func TestSupervisor_NewSupervisor_SetShutdownSignal(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := Supervisor{}
-
-	// Act
-	s.SetShutdownSignal(signal.OSShutdownSignal())
-
-	// Assert
-	Expect(s.shutdown).ToNot(BeNil())
-}
-
-func TestSupervisor_NewSupervisor_DisableLogger(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := Supervisor{}
-
-	// Act
-	s.DisableLogger()
-
-	// Assert
-	Expect(s.logger).ToNot(BeNil())
-}
-
-func TestSupervisor_AddRunner_AlreadyExistent(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	run := func(_ context.Context) error { return nil }
-
-	// Act
-	s.AddRunner("some_runner", run)
-	s.AddRunner("some_runner", run)
-
-	// Assert
-	addedRunner := s.processes["runner-some_runner"].(*runner)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.restartPolicy.Policy).To(Equal(always))
-	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(2))
-}
-
-func TestSupervisor_AddRunner_WithDefaultPolicies(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	run := func(_ context.Context) error { return nil }
-
-	// Act
-	s.AddRunner("some_runner", run)
-
-	// Assert
-	addedRunner := s.processes["runner-some_runner"].(*runner)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.restartPolicy.Policy).To(Equal(always))
-	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(2))
-}
-
-func TestSupervisor_AddRunner_WithRestartPolicyOnFailure(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	run := func(_ context.Context) error { return nil }
-
-	// Act
-	s.AddRunner("some_runner", run, WithRestartPolicyOnFailure(3))
-
-	// Assert
-	addedRunner := s.processes["runner-some_runner"].(*runner)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedRunner).ToNot(BeNil())
-	Expect(addedRunner.restartPolicy.Policy).To(Equal(onFailure))
-	Expect(addedRunner.restartPolicy.MaxAttempts).To(Equal(3))
-}
-
-func TestSupervisor_AddTask_AlreadyExistent(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	startStopper := &MockStartStopper{}
-
-	// Act
-	s.AddTask("some_task", startStopper)
-	s.AddTask("some_task", startStopper)
-
-	// Assert
-	addedTask := s.processes["task-some_task"].(*task)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.restartPolicy.Policy).To(Equal(always))
-	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(2))
-}
-
-func TestSupervisor_AddTask_WithDefaultPolicies(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	startStopper := &MockStartStopper{}
-
-	// Act
-	s.AddTask("some_task", startStopper)
-
-	// Assert
-	addedTask := s.processes["task-some_task"].(*task)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.restartPolicy.Policy).To(Equal(always))
-	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(2))
-}
-
-func TestSupervisor_AddTask_WithRestartPolicyOnFailure(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithRestartPolicyAlways(2))
-	startStopper := &MockStartStopper{}
-
-	// Act
-	s.AddTask("some_task", startStopper, WithRestartPolicyOnFailure(3))
-
-	// Assert
-	addedTask := s.processes["task-some_task"].(*task)
-
-	Expect(len(s.processes)).To(Equal(1))
-	Expect(addedTask).ToNot(BeNil())
-	Expect(addedTask.restartPolicy.Policy).To(Equal(onFailure))
-	Expect(addedTask.restartPolicy.MaxAttempts).To(Equal(3))
-}
-
-func TestSupervisor_Start_WithoutErrors(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor()
-	p := &mockProcess{}
-	s.processes["some_process"] = p
-	p.On("Run", mock.Anything).Return(nil)
-
-	// Act
-	s.Start()
-
-	// Assert
-	Expect(p.AssertExpectations(t)).To(BeTrue())
-}
-
-func TestSupervisor_Start_WithPanic_FailurePolicyIgnore(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	s := NewSupervisor(WithFailurePolicyIgnore())
-	p := &mockProcess{}
-	s.processes["some_process"] = p
-	p.On("Run", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
-		panic("panic here")
+func TestNewSupervisor(t *testing.T) {
+	t.Run("with default options", func(t *testing.T) {
+		s := New()
+
+		require.NotZero(t, s, "not zero value")
+		require.Equal(t, stateReady, s.state, "right state")
 	})
-	p.On("Name").Return("some_process")
-
-	// Act
-	s.Start()
-
-	// Assert
-	Expect(p.AssertExpectations(t)).To(BeTrue())
 }
 
-func TestSupervisor_Start_WithErrorsFailurePolicyIgnore(t *testing.T) {
-	RegisterTestingT(t)
+func TestSupervisor_Reconfigure(t *testing.T) {
 
-	// Assign
-	s := NewSupervisor(WithFailurePolicyIgnore())
-	p := &mockProcess{}
-	s.processes["some_process"] = p
-	p.On("Run", mock.Anything).Return(errors.New("some error"))
-
-	// Act
-	s.Start()
-
-	// Assert
-	Expect(p.AssertExpectations(t)).To(BeTrue())
 }
 
-func TestSupervisor_Start_WithErrorsFailurePolicyShutdown(t *testing.T) {
-	RegisterTestingT(t)
+type startStopper struct {
+	start func() error
+	stop  func() error
+}
 
-	// Assign
-	s := NewSupervisor(WithFailurePolicyShutdown())
-	p1 := &mockProcess{}
-	p2 := &mockProcess{}
-	s.processes["some_process1"] = p1
-	s.processes["some_process2"] = p2
-	p1.On("Run", mock.AnythingOfType("*context.cancelCtx")).Run(func(args mock.Arguments) {
-		ctx := args.Get(0).(context.Context)
-		<-ctx.Done()
-	}).Return(nil)
-	p2.On("Run", mock.Anything).Return(errors.New("some error"))
+func (s startStopper) Start() error {
+	return s.start()
+}
+func (s startStopper) Stop() error {
+	return s.stop()
+}
 
-	// Act
-	s.Start()
+func TestSupervisor_AddTask(t *testing.T) {
+	t.Run("adds task with started supervisor", func(t *testing.T) {
+		sv := New()
+		ss := startStopper{}
+		sv.AddTask("0", ss)
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
 
-	// Assert
-	Expect(p1.AssertExpectations(t)).To(BeTrue())
-	Expect(p2.AssertExpectations(t)).To(BeTrue())
+		for i := 0; i < 100; i++ {
+			sv.AddTask(strconv.Itoa(i), ss)
+		}
+		require.Len(t, sv.processes, 1, "right number of runners")
+		sv.Shutdown()
+	})
+	t.Run("adds task with same name", func(t *testing.T) {
+		sv := New()
+		ss := startStopper{}
+
+		for i := 0; i < 100; i++ {
+			sv.AddTask("name", ss)
+		}
+
+		require.Len(t, sv.processes, 1, "right number of runners")
+	})
+	t.Run("adds task with success", func(t *testing.T) {
+		sv := New()
+		ss := startStopper{}
+
+		wg := sync.WaitGroup{}
+		wg.Add(100)
+		for i := 0; i < 100; i++ {
+			go func(i int) {
+				sv.AddTask(strconv.Itoa(i), ss)
+				wg.Done()
+			}(i)
+		}
+		wg.Wait()
+
+		require.Len(t, sv.processes, 100, "right number of runners")
+	})
+}
+
+func TestSupervisor_AddRunner(t *testing.T) {
+	t.Run("adds runner with started supervisor", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error { return nil }
+		sv.AddRunner("0", callback)
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+		require.Len(t, sv.processes, 1, "right number of runners")
+		sv.Shutdown()
+	})
+	t.Run("adds runner with same name", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error { return nil }
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner("name", callback)
+		}
+
+		require.Len(t, sv.processes, 1, "right number of runners")
+	})
+	t.Run("adds runner with success", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error { return nil }
+
+		wg := sync.WaitGroup{}
+		wg.Add(100)
+		for i := 0; i < 100; i++ {
+			go func(i int) {
+				sv.AddRunner(strconv.Itoa(i), callback)
+				wg.Done()
+			}(i)
+		}
+		wg.Wait()
+
+		require.Len(t, sv.processes, 100, "right number of runners")
+	})
+}
+
+func TestSupervisor_Start(t *testing.T) {
+	t.Run("started with no processes", func(t *testing.T) {
+		sv := New()
+
+		sv.Start()
+		require.Equal(t, stateReady, sv.state, "not started")
+	})
+	t.Run("starts all processes with error", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+		sv.Shutdown()
+	})
+	t.Run("starts all processes with error but with shutdown policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyShutdown())
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+		sv.Shutdown()
+	})
+	t.Run("starts all processes with error but with retry policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyRetry(-1, time.Millisecond*500))
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		sv.Shutdown()
+	})
+	t.Run("starts all processes with error but with ignore policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyIgnore())
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+		sv.Shutdown()
+	})
+	t.Run("starts all processes and locks", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error {
+			<-ctx.Done()
+			time.Sleep(time.Millisecond)
+			return nil
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		sv.Shutdown()
+	})
+}
+
+func TestSupervisor_Shutdown(t *testing.T) {
+	t.Run("shutdown with unstarted supervisor", func(t *testing.T) {
+		sv := New()
+
+		sv.Shutdown()
+		require.Equal(t, stateReady, sv.state, "not started")
+	})
+	t.Run("shutdown with started supervisor but no processes added", func(t *testing.T) {
+		sv := New()
+
+		go sv.Start()
+		time.Sleep(time.Millisecond)
+
+		sv.Shutdown()
+		require.Equal(t, stateReady, sv.state, "not started")
+	})
+	t.Run("shutdown with processes", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error {
+			<-ctx.Done()
+			return nil
+		}
+
+		for i := 0; i < 10; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("shutdown with non-locked processes", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error {
+			return nil
+		}
+
+		for i := 0; i < 10; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("shutdown with failed processes", func(t *testing.T) {
+		sv := New()
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 10; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("shutdown with failed processes with shutdown policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyShutdown())
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 100; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("shutdown with failed processes with retry policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyRetry(-1, time.Millisecond*500))
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 10; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("shutdown with failed processes with ignore policy", func(t *testing.T) {
+		sv := New(WithFailurePolicyIgnore())
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+
+		for i := 0; i < 10; i++ {
+			sv.AddRunner(strconv.Itoa(i), callback)
+		}
+
+		go sv.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+
+		sv.Shutdown()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&sv.state) == stateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
 }

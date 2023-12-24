@@ -2,81 +2,108 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
 
-var defaultRateLimit = time.Second
-
-// Callback is a runner callback that will be triggered when supervisor starts.
-// It injects a context that will be canceled when supervisor shutdown.
-// You should listen <-ctx.Done() to lock/unlock your callback.
-type Callback func(ctx context.Context) error
-
 // Runner contains the callback and manages the restart policies and its context.
-type runner struct {
-	Callback      Callback
-	name          string
-	restartPolicy RestartPolicy
-	terminated    int32
-	logger        Logger
+type Runner struct {
+	options  Options
+	name     string
+	callback func(ctx context.Context) error
+	mctx     context.Context
+	shutdown context.CancelFunc
+	state    int32
+	control  chan struct{}
 }
 
-// Name returns runner name.
-func (r *runner) Name() string {
+// NewRunner creates a new runner.
+func NewRunner(name string, callback func(ctx context.Context) error, defaultOptions Options) *Runner {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	return &Runner{
+		options:  defaultOptions,
+		name:     name,
+		callback: callback,
+		mctx:     ctx,
+		shutdown: cancel,
+		state:    processStateReady,
+		control:  make(chan struct{}),
+	}
+}
+
+// Name return runner name.
+func (r *Runner) Name() string {
 	return r.name
 }
 
-// Run runs the Runner.
-// It creates a cancel context and manages callback error according restarting policy.
-func (r *runner) Run(ctx context.Context) error {
-	r.logger(Info, loggerData{"name": r.Name()}, "runner is starting")
+// Start runner.
+func (r *Runner) Start() {
+	l := slog.With(
+		slog.String("name", r.name),
+		slog.Any("labels", []string{"supervisor", "runner", "start"}),
+	)
 
-	var err error
-	rCtx, cancel := context.WithCancel(context.Background())
+	policyController := NewPolicyController(r.options.Policy)
+	start := func() {
+		defer func() {
+			if data := recover(); data != nil {
+				atomic.StoreInt32(&r.state, processStateAborted)
 
-	go func() {
-		<-ctx.Done()
-		atomic.SwapInt32(&r.terminated, 1)
-		cancel()
-	}()
-
-	// rate limited to 1 seconds.
-	ticker := time.NewTicker(defaultRateLimit)
-	defer ticker.Stop()
-
-	attempts := 1
-
-loop:
-	for ; ; <-ticker.C {
-		err = r.Callback(rCtx)
-		if err != nil {
-			r.logger(Error, loggerData{"name": r.Name(), "cause": fmt.Sprintf("%v", err)}, "failed to run runner")
-		}
-
-		if atomic.LoadInt32(&r.terminated) == 1 || attempts >= r.restartPolicy.MaxAttempts {
-			break loop
-		}
-
-		switch r.restartPolicy.Policy {
-		case never:
-			break loop
-		case onFailure:
-			if err == nil {
-				break loop
+				l.Error("process panicked",
+					slog.String("cause", fmt.Sprintf("%v", data)),
+					slog.String("stack", string(debug.Stack())),
+				)
 			}
-			r.logger(Info, loggerData{"name": r.Name(), "attempts": attempts}, "runner is restarting")
-			break
-		case always:
-			r.logger(Info, loggerData{"name": r.Name(), "attempts": attempts}, "runner is restarting")
+		}()
+
+		for {
+			if errors.Is(r.mctx.Err(), context.Canceled) {
+				break
+			}
+
+			if err := r.callback(r.mctx); err != nil {
+				if policyController.Decide() == DecisionRetry {
+					l.Error("process thrown an error, retrying",
+						slog.Int("attempts", policyController.attempts),
+					)
+
+					time.Sleep(policyController.options.FailureDelay)
+					continue
+				}
+
+				l.Error("process thrown an error, exiting",
+					slog.String("cause", err.Error()),
+				)
+
+				atomic.StoreInt32(&r.state, processStateAborted)
+				return
+			}
+
 			break
 		}
-
-		attempts++
 	}
 
-	r.logger(Info, loggerData{"name": r.Name()}, "runner terminated")
+	if !atomic.CompareAndSwapInt32(&r.state, processStateReady, processStateStarted) {
+		l.Warn("process thrown an error, exiting")
+		return
+	}
 
-	return err
+	start()
+	r.control <- struct{}{}
+	atomic.SwapInt32(&r.state, processStateStopped)
+}
+
+// Stop runner.
+func (r *Runner) Stop() {
+	if !atomic.CompareAndSwapInt32(&r.state, processStateStarted, processStateStopping) {
+		return
+	}
+
+	r.shutdown()
+	<-r.control
 }

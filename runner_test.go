@@ -2,281 +2,342 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
+	"github.com/stretchr/testify/require"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/pkg/errors"
-
-	. "github.com/onsi/gomega"
 )
 
-func init() {
-	defaultRateLimit = 1
+func TestNewRunner(t *testing.T) {
+	t.Run("creates a new basic runner", func(t *testing.T) {
+		callback := func(ctx context.Context) error { return nil }
+		r := NewRunner("name", callback, Options{})
+
+		require.NotZero(t, r, "not zero value")
+		require.Equal(t, "name", r.name, "right name")
+	})
 }
 
-func TestRunner_Run_WithError_NeverPolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
-			return errors.New("some error")
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      never,
-			MaxAttempts: 100,
-		},
-		logger: dumbLogger,
-	}
-
-	// Act
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).To(HaveOccurred())
-	Expect(calls).To(Equal(1))
-}
-
-func TestRunner_Run_WithError_OnFailurePolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
-			return errors.New("some error")
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      onFailure,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
-
-	// Act
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).To(HaveOccurred())
-	Expect(calls).To(Equal(2))
-}
-
-func TestRunner_Run_WithError_AlwaysPolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
-			return errors.New("some error")
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      always,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
-
-	// Act
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).To(HaveOccurred())
-	Expect(calls).To(Equal(2))
-}
-
-func TestRunner_Run_RunAndExitWithoutWait_NeverPolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
+func TestRunner_Start(t *testing.T) {
+	t.Run("panics while starting", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			panic("puff")
 			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      never,
-			MaxAttempts: 100,
-		},
-		logger: dumbLogger,
-	}
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Act
-	err := r.Run(ctx)
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state aborted",
+		)
+	})
+	t.Run("returns error while starting", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(1))
-}
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state aborted",
+		)
+	})
+	t.Run("returns error while starting but with shutdown policy", func(t *testing.T) {
+		control := make(chan struct{})
+		go func() {
+			<-control
+		}()
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailurePolicy:   Shutdown,
+			ShutdownControl: control,
+		}})
 
-func TestRunner_Run_RunAndExitWithoutWait_OnFailurePolicy(t *testing.T) {
-	RegisterTestingT(t)
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+	})
+	t.Run("returns error while starting but with retry policy", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailureAttempts: -1,
+			FailureDelay:    time.Millisecond * 500,
+			FailurePolicy:   Retry,
+		}})
 
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+	})
+	t.Run("returns error while starting but with ignore policy", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailurePolicy: Ignore,
+		}})
+
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state aborted",
+		)
+		r.Stop()
+	})
+	t.Run("starts with non locking callback", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
 			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      onFailure,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Act
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(1))
-}
-
-func TestRunner_Run_RunAndExitWithoutWait_AlwaysPolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx := context.TODO()
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			calls++
-			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      always,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
-
-	// Act
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(2))
-}
-
-func TestRunner_Run_RunAndWait_NeverPolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx, cancel := context.WithCancel(context.TODO())
-	r := runner{
-		Callback: func(ctx context.Context) error {
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
+	t.Run("tries to start a runner that is already started", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
 			<-ctx.Done()
-			calls++
 			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      never,
-			MaxAttempts: 100,
-		},
-		logger: dumbLogger,
-	}
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Act
-	go func() {
-		time.Sleep(time.Second)
-		cancel()
-	}()
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Start()
+		r.Start()
+		r.Start()
+		r.Start()
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+	})
+	t.Run("started with success", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			<-ctx.Done()
+			return nil
+		}
+		r := NewRunner("name", callback, Options{})
 
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(1))
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+	})
 }
 
-func TestRunner_Run_RunAndWait_OnFailurePolicy(t *testing.T) {
-	RegisterTestingT(t)
-
-	// Assign
-	calls := 0
-	ctx, cancel := context.WithCancel(context.TODO())
-	r := runner{
-		Callback: func(ctx context.Context) error {
+func TestRunner_Stop(t *testing.T) {
+	t.Run("stops a process that is not started yet", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
 			<-ctx.Done()
-			calls++
 			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      onFailure,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Act
-	go func() {
-		time.Sleep(4 * time.Second)
-		cancel()
-	}()
+		r.Stop()
+		require.Equal(t, processStateReady, r.state, "right state")
+	})
+	t.Run("stops an aborted process", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{})
 
-	err := r.Run(ctx)
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state aborted",
+		)
+		r.Stop()
+		require.Equal(t, processStateAborted, r.state, "right state")
+	})
+	t.Run("stops an aborted process but with shutdown policy", func(t *testing.T) {
+		control := make(chan struct{})
+		go func() {
+			<-control
+		}()
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailurePolicy:   Shutdown,
+			ShutdownControl: control,
+		}})
 
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(1))
-}
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+	})
+	t.Run("stops an aborted process but with retry policy", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailureAttempts: -1,
+			FailureDelay:    time.Millisecond * 500,
+			FailurePolicy:   Retry,
+		}})
 
-func TestRunner_Run_RunAndWait_AlwaysPolicy(t *testing.T) {
-	RegisterTestingT(t)
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+	})
+	t.Run("stops an aborted process but with ignore policy", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
+			return fmt.Errorf("some error")
+		}
+		r := NewRunner("name", callback, Options{Policy: PolicyOptions{
+			FailurePolicy: Ignore,
+		}})
 
-	// Assign
-	calls := 0
-	ctx, cancel := context.WithCancel(context.TODO())
-	r := runner{
-		Callback: func(ctx context.Context) error {
-			<-ctx.Done()
-			calls++
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateAborted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+	})
+	t.Run("stops with non locking callback", func(t *testing.T) {
+		callback := func(ctx context.Context) error {
 			return nil
-		},
-		restartPolicy: RestartPolicy{
-			Policy:      always,
-			MaxAttempts: 2,
-		},
-		logger: dumbLogger,
-	}
+		}
+		r := NewRunner("name", callback, Options{})
 
-	// Act
-	go func() {
-		time.Sleep(time.Second)
-		cancel()
-	}()
-
-	err := r.Run(ctx)
-
-	// Assert
-	Expect(err).ToNot(HaveOccurred())
-	Expect(calls).To(Equal(1))
+		go r.Start()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStarted
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state started",
+		)
+		r.Stop()
+		require.Eventuallyf(t,
+			func() bool {
+				return atomic.LoadInt32(&r.state) == processStateStopped
+			},
+			time.Second,
+			time.Millisecond,
+			"eventually right state stopped",
+		)
+	})
 }
 
 func TestRunner_Name(t *testing.T) {
-	RegisterTestingT(t)
+	callback := func(ctx context.Context) error { return nil }
+	r := NewRunner("name", callback, Options{})
 
-	// Assign
-	r := runner{
-		name: "some_name",
-	}
-
-	// Act
-	name := r.Name()
-
-	// Assert
-	Expect(name).To(Equal(r.name))
+	require.Equal(t, "name", r.Name(), "equal name")
 }
